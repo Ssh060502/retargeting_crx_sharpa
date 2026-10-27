@@ -39,3 +39,18 @@ def test_module_import_does_not_load_ros_or_publish():
     code="import sys; sys.path.insert(0,'scripts'); import run_h5_real; assert 'rclpy' not in sys.modules; assert 'retargeting_ros.sharpa_joint' not in sys.modules"
     result=subprocess.run([sys.executable,'-c',code],cwd=root,capture_output=True,text=True)
     assert result.returncode==0,result.stderr
+
+
+
+def test_publisher_error_preserves_endpoint_evidence_without_relaxing_rule():
+    from h5_real_guard import validate_command_publishers
+    own=NS(node_name="retargeting_sharpa_joint",node_namespace="/",endpoint_gid=[1,2])
+    other=NS(node_name="move_to_default_pose",node_namespace="/",endpoint_gid=[3,4])
+    validate_command_publishers("/target", [])
+    validate_command_publishers("/target", [own])
+    with pytest.raises(RuntimeError,match="move_to_default_pose"):
+        validate_command_publishers("/target", [own,other])
+    with pytest.raises(RuntimeError,match="count=2"):
+        validate_command_publishers("/target", [own,own])
+    with pytest.raises(RuntimeError,match="gid"):
+        validate_command_publishers("/target", [other])

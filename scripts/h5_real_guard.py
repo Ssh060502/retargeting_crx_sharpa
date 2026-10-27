@@ -18,6 +18,18 @@ def validate_plugins(components):
         raise RuntimeError("Real hardware components must be active")
 
 
+def validate_command_publishers(topic, publishers):
+    """Keep the existing exclusion rule, but retain evidence from the failing instant."""
+    if len(publishers) > 1 or any(p.node_name != "retargeting_sharpa_joint" for p in publishers):
+        endpoints = []
+        for publisher in publishers:
+            namespace = getattr(publisher, "node_namespace", "?")
+            gid = getattr(publisher, "endpoint_gid", ())
+            endpoints.append({"node": namespace.rstrip("/") + "/" + publisher.node_name,
+                              "gid": list(gid)})
+        raise RuntimeError(f"Unexpected competing command publisher: {topic}; count={len(publishers)}; endpoints={endpoints}")
+
+
 class RealGuard:
     """Read controller-manager state and hand parameters; never publish commands."""
     def __init__(self):
@@ -79,8 +91,7 @@ class RealGuard:
             raise RuntimeError("Missing or ambiguous interpolation node")
         for topic in ("/crx5ia/joint_targets", "/sharpa/left_hand/joint_command", "/sharpa/right_hand/joint_command"):
             publishers = self.node.get_publishers_info_by_topic(topic)
-            if len(publishers) > 1 or any(p.node_name != "retargeting_sharpa_joint" for p in publishers):
-                raise RuntimeError("Unexpected competing command publisher: " + topic)
+            validate_command_publishers(topic, publishers)
         for client in self.arms:
             response = self._call(client, self.hardware_request.Request())
             validate_plugins(response.component)
