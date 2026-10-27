@@ -80,3 +80,14 @@ Measured approximate table bounds in the shared left-base frame: x=[0.18358936,0
 ```
 
 The 2mm default tolerance is only a reporting threshold, not clearance certification. The tested forbidden region extends downward indefinitely within the table footprint, conservatively covering under-table intrusion. This is not a watertight mesh/solid intersection engine. It does not check self/inter-arm/object-robot collisions, unmodeled stands, inside-volume containment cases, between-frame swept motion, initial/final transitions or physical calibration error. Zero flagged entities must never be called collision-free. Object support contact near zero clearance is reported without automatically classifying it as an invalid task contact.
+
+
+## Passive browser preview
+
+scripts/view_h5_replay.py consumes qpos56 directly and displays both arms/hands using their collision meshes, the recorded transformed hammer mesh, and a finite table. It never imports ROS or sends commands. No physics/collision detection is performed. The table display is 3cm thick for visibility only, not a measured underside. Playback starts paused, supports frame scrubbing, speed control and optional looping. Localhost binding is default. If accessing a remote machine, use SSH port forwarding (ssh -L 9219:127.0.0.1:9219 user@host), then open http://127.0.0.1:9219 on your own computer. This uses the existing optional viser dependency; install it only if missing.
+
+```bash
+.venv/bin/python scripts/view_h5_replay.py --trajectory outputs/hammer/both_tabletop_slow7.npz --reference-h5 ~/data/grab-s1_hammer_use_1-rby1a_sharpa.h5 --table 0.18358936 0.88358936 -1.15578132 0.24421868 -0.195
+```
+
+--validate-only checks files/meshes without importing viser or starting a server.
