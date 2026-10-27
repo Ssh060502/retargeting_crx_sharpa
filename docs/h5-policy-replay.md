@@ -129,3 +129,28 @@ The runner samples commands at 50Hz, matching the explicit linear interpolation 
 Controls: p + Enter pauses and requests one measured-pose hold through the existing backend; r + Enter re-enters the paused trajectory point from fresh measured feedback before continuing; q + Enter or Ctrl+C stops. EOF also stops. Final target continues until feedback settles within 0.02rad arms / 0.05rad hands for 0.5s, timeout 10s. Stale feedback, lost mock checks, missed deadlines >0.2s and tracking error >0.5rad stop playback. CSV records elapsed time, phase, trajectory progress, target and measured positions. Closing calls the backend's measured hold when valid feedback is available; missing feedback means cease publishing and leave driver timeout behavior in charge. Process death and arbitrary middleware failures cannot guarantee a hold. No real e-stop claim is implied.
 
 The mock test does NOT display a physically attached hammer in RViz: only robot joints are sent to the driver. Use the passive preview for recorded object motion. Do not take this as evidence that a real hand can grip or strike. Real-device execution remains unsupported. Locally only ROS-free tests and validation can run; installed ROS/Jazzy integration must be checked on the server.
+
+
+## Separate single-arm empty-hand commissioning test
+
+New scripts: run_h5_arm_smoke.py and h5_arm_smoke.py. The existing full bimanual mock runner remains mock-only; no guard has been bypassed. The new test does NOT execute the complete hammer trajectory. It takes 30 source arm frames (configurable 6..60), smooths a relative 6-joint path, reduces its largest excursion to at most approximately 1 degree, anchors it to the measured current arm pose, traverses slowly and reverses back to that pose. Normal end returns; interruption does not automatically return. No finger or inactive-arm commands are created. Playback carries no hammer/object target.
+
+Default --mode prepare only writes relative_joints to an NPZ, without ROS imports/connections:
+
+```bash
+.venv/bin/python scripts/run_h5_arm_smoke.py --trajectory outputs/hammer/both_tabletop_slow7.npz --side right
+```
+
+First test this new code on software mock, with the same isolated domain 187, LOCALHOST discovery and method:=linear input_rate_hz:=50.0 launch used above:
+
+```bash
+.venv/bin/python scripts/run_h5_arm_smoke.py --trajectory outputs/hammer/both_tabletop_slow7.npz --side right --mode mock --out outputs/hammer/right_smoke_mock.npz
+```
+
+Live modes first read feedback and verify the selected controller manager's hardware plugin, active forward controller, interpolation method/rate, unique graph identities and absence of competing command senders. Mock expects active mock_components/GenericSystem; real expects active fanuc_robot_driver/FanucHardwareInterface. The absolute path is saved in *_anchored.npz and current/planned joint ranges are printed before explicit operator confirmation. Start-pose drift aborts rather than silently re-anchoring. --mode real is an explicit, distinct physical path requiring domain 87 and LOCALHOST. It must NOT be run before the new mock test and a local clear-space review; no physical test was run during development.
+
+Real use requires the local operator to place the selected arm empty-handed in a clear elevated pose, verify the entire small path is clear of the table/other arm/cables, and have the robot's actual stop control available. The tool does not automatically certify Cartesian or inter-arm clearance, safe stopping, actual hand mounting, payload, or human clearance. Small joint motion can still cause contact near an obstacle or singularity. Keep other senders stopped, and remember driver startup may enable devices independently of this script. Do not launch physical Sharpa just to test arm communication. Use a selected-arm driver launch where possible and review actual device/stop configuration on site.
+
+When this review is complete, the physical command uses the same arguments with --mode real, followed by literal START right real (or left) at the displayed confirmation. It sends only complete selected-side J1..J6 JointState commands to /crx5ia/joint_targets at 50Hz, and reads /crx5ia/SIDE/joint_states. No hardware test was performed locally. Stop with q + Enter or Ctrl+C; this requests one measured hold if feedback is fresh, otherwise ceases publishing and relies on driver behavior. This is not an emergency stop. Missed deadlines, stale/frozen feedback, >0.03rad tracking error, position-margin violations, or runtime command-speed/excursion cap violations abort. CSV records target/feedback. Successful completion requires feedback to settle near the original start.
+
+The smoothed path is conservatively time-scaled based on dense derivative samples (planning budgets velocity .008rad/s, acceleration .008rad/s2, jerk .02rad/s3); it is not an analytic manufacturer guarantee and downstream linear interpolation can alter derivatives. The initial local right-arm preparation has max excursion approximately 0.98 degrees and total duration 48.32s. These scripts must be validated on installed ROS/Jazzy; only headless pure planning tests are available locally.
