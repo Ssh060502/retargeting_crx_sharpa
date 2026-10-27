@@ -58,3 +58,12 @@ Actual CRX installation transforms, collisions, table/strike location, contact d
 ```bash
 env -u PYTHONPATH .venv/bin/python -m pytest tests/test_h5_replay_review.py -q
 ```
+
+
+## Horizontal bimanual tabletop search
+
+Use --side both --search-tabletop --table-height -0.195 with explicit --left-base and --right-base. The measured operation surface is approximately 19.5 cm below the left robot mounting plane. The source plane is assumed z=0; override --source-table-z if the source support plane differs. This maps support planes, not the object origin directly onto the table.
+
+Only xy translation and yaw vary; roll/pitch remain zero. --anchor-object defaults to object_0. --table-x-range MIN MAX COUNT and --table-y-range MIN MAX COUNT bound the initial object-origin xy positions in the shared scene, not measured table boundaries. Defaults are x=[0.35,0.65], y=[-0.55,-0.25], three samples each. --table-yaws-deg defaults to 0 90 180 270. These are exploratory search bounds; table extent, hand/arm/object collision and support geometry are not checked.
+
+The search screens three frames, then checks 12 frames, then all frames. A candidate is accepted only if both arms converge on all frames without near-limit solutions. IK branch choices and finite sampling of placements can cause false negatives. Failure in this finite grid does not prove physical unreachability. Successful output is still offline only and requires fresh velocity/acceleration/jerk checks, transition planning and collision validation. The output records table_height/source_table_z and the chosen scene transform. Existing --search-placement behavior is unchanged.

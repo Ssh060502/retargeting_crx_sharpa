@@ -82,3 +82,47 @@ def test_cli_rejects_execution_and_missing_bases(extra, expected):
     result = subprocess.run(command + extra, capture_output=True, text=True)
     assert result.returncode != 0
     assert expected in result.stderr
+
+
+@pytest.mark.parametrize("yaw", [0., .7, -1.4, np.pi])
+def test_horizontal_plane_and_anchor(yaw):
+    from run_h5_replay import horizontal_placement
+    anchor = np.array([.5, .03, .011])
+    values = horizontal_placement(anchor, [.45, -.4], yaw, .02, -.195)
+    pose = transform(values)
+    np.testing.assert_allclose(pose[:3, :3] @ [0, 0, 1], [0, 0, 1], atol=1e-12)
+    moved = pose @ np.r_[anchor, 1.]
+    np.testing.assert_allclose(moved[:2], [.45, -.4], atol=1e-12)
+    for xy in ([0, 0], [.7, -.3]):
+        assert (pose @ [*xy, .02, 1])[2] == pytest.approx(-.195)
+
+
+@pytest.mark.parametrize("full_passes", [True, False])
+def test_tabletop_requires_full_trajectory(monkeypatch, full_passes):
+    import run_h5_replay as replay
+    from types import SimpleNamespace
+    ref = {"qpos": np.zeros((20, 2, 29)), "is_rhand": np.array([False, True]),
+           "base_poses": np.tile(np.eye(4), (20, 1, 1)),
+           "objects": {"object_0": (np.tile([.5, 0., .01], (20, 1)), None)}}
+    args = SimpleNamespace(anchor_object="object_0", table_x_range=[.4, .4, 1],
+                           table_y_range=[-.3, -.3, 1], table_yaws_deg=[30.],
+                           source_table_z=0., table_height=-.195, clip_hand_tolerance=0.)
+    counts = []
+    def fake(sample, urdf, options):
+        n = len(sample["qpos"])
+        counts.append(n)
+        assert options.scene_transform[2:5] == [-.195, 0., 0.]
+        diag = np.zeros((n, 4))
+        if n == 20 and not full_passes:
+            diag[7, 0] = .1
+        return {"diagnostics": {side: diag for side in ("left", "right")},
+                "sides": ["left", "right"], "qpos56": np.zeros((n, 56)),
+                "crx_cfg": {side: {"initial_qpos": np.zeros(28)} for side in ("left", "right")}}
+    monkeypatch.setattr(replay, "retarget_hand", fake)
+    if full_passes:
+        result = replay.search_tabletop(ref, "unused", args)
+        assert result[2:5] == [-.195, 0., 0.]
+    else:
+        with pytest.raises(ValueError, match="No full-trajectory solution"):
+            replay.search_tabletop(ref, "unused", args)
+    assert counts == [3, 12, 20]

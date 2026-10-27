@@ -218,7 +218,7 @@ def retarget_hand(
         target_poses = np.linalg.inv(transform(getattr(args, side + "_base"))) @ transform(args.scene_transform) @ ref["base_poses"] @ target_poses
         seed = crx_cfg[side]["initial_qpos"][:ARM_DOF]
         arm_qpos, diag = solve_crx_arm_ik(
-            crx_cfg[side]["urdf_path"], side, target_poses, sharpa_hand, seed,
+            crx_cfg[side]["urdf_path"], side, target_poses, sharpa_hand, seed, max_iters=getattr(args, "ik_max_nfev", 150),
         )
         qpos56[:, offset:offset + ARM_DOF] = arm_qpos
         qpos56[:, offset + ARM_DOF:offset + SIDE_DOF] = sharpa_hand
@@ -256,6 +256,69 @@ def print_diagnostics(result: dict) -> bool:
     return ok
 
 
+def horizontal_placement(anchor, destination_xy, yaw, source_z, target_z):
+    """Map a horizontal source plane exactly to the measured target plane."""
+    if not np.isfinite([*anchor, *destination_xy, yaw, source_z, target_z]).all():
+        raise ValueError("Placement inputs must be finite")
+    rotated = Rotation.from_euler("z", yaw).apply(anchor)
+    return [destination_xy[0] - rotated[0], destination_xy[1] - rotated[1],
+            target_z - source_z, 0., 0., yaw]
+
+
+def search_tabletop(ref, urdf, args):
+    """Finite grid search with shared horizontal transforms, followed by full validation."""
+    from copy import copy
+    if set(ref["is_rhand"].tolist()) != {False, True}:
+        raise ValueError("Tabletop bimanual search needs both source hands")
+    if args.anchor_object not in ref["objects"]:
+        raise ValueError("Anchor object missing: " + args.anchor_object)
+    anchor = ref["objects"][args.anchor_object][0][0]
+    def subset(count):
+        keep = np.unique(np.linspace(0, len(ref["qpos"]) - 1, count).astype(int))
+        sample = dict(ref)
+        sample["qpos"], sample["base_poses"] = ref["qpos"][keep], ref["base_poses"][keep]
+        return sample
+    trial_args = copy(args)
+    trial_args.clip_hand_tolerance = 0.  # Finger clipping cannot affect hand-root IK.
+    trial_args.ik_max_nfev = 60
+    def evaluate(sample, placement):
+        trial_args.scene_transform = placement
+        trial = retarget_hand(sample, urdf, trial_args)
+        diag = np.concatenate(list(trial["diagnostics"].values()))
+        failed = int(((diag[:, 0] >= 1e-4) | (diag[:, 1] >= 1e-3) | (diag[:, 3] > 0)).sum())
+        error = float(np.max(diag[:, 0] + .2 * diag[:, 1]))
+        # Stable tie-break: stay near configured seed, not numerical residual noise.
+        travel = 0.
+        for side in trial["sides"]:
+            offset = 0 if side == "left" else SIDE_DOF
+            arm = trial["qpos56"][:, offset:offset + 6]
+            travel += float(np.mean((arm - trial["crx_cfg"][side]["initial_qpos"][:6]) ** 2))
+        return (failed, error if failed else 0., travel)
+    coarse = subset(3)
+    candidates = []
+    for x in np.linspace(*args.table_x_range[:2], int(args.table_x_range[2])):
+        for y in np.linspace(*args.table_y_range[:2], int(args.table_y_range[2])):
+            for yaw in np.deg2rad(args.table_yaws_deg):
+                placement = horizontal_placement(anchor, [x, y], yaw, args.source_table_z, args.table_height)
+                score = evaluate(coarse, placement)
+                candidates.append((score, placement))
+                print("tabletop candidate anchor xy/yaw", x, y, yaw, "score", score, flush=True)
+    # Try every coarse-feasible candidate on the full trajectory until one passes.
+    # Failure means only this finite grid/solver failed, not global unreachability.
+    fine = subset(12)
+    for _, placement in sorted(candidates, key=lambda item: item[0]):
+        if evaluate(fine, placement)[0]:
+            continue
+        trial_args.ik_max_nfev = 150
+        score = evaluate(ref, placement)
+        trial_args.ik_max_nfev = 60
+        print("tabletop full trajectory score", score, flush=True)
+        if score[0] == 0:
+            print("Selected horizontal scene transform:", placement, flush=True)
+            return placement
+    raise ValueError("No full-trajectory solution found in this tabletop grid; no result saved. Expand grid or improve IK; this does not prove physical unreachability.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", required=True, help="Path to a ConTrack GRAB h5 "
@@ -280,7 +343,22 @@ def main() -> None:
     parser.add_argument("--scene-transform", nargs=6, type=float, default=[0.] * 6, metavar=("X", "Y", "Z", "ROLL", "PITCH", "YAW"))
     parser.add_argument("--left-base", nargs=6, type=float)
     parser.add_argument("--right-base", nargs=6, type=float)
+    parser.add_argument("--search-tabletop", action="store_true", help="Shared bimanual xy/yaw search with fixed horizontal table height")
+    parser.add_argument("--table-height", type=float, help="Measured operation surface z in shared scene, meters")
+    parser.add_argument("--source-table-z", type=float, default=0., help="Assumed source horizontal plane z; verify from source scene")
+    parser.add_argument("--anchor-object", default="object_0")
+    parser.add_argument("--table-x-range", nargs=3, type=float, default=[.35, .65, 3], metavar=("MIN", "MAX", "COUNT"))
+    parser.add_argument("--table-y-range", nargs=3, type=float, default=[-.55, -.25, 3], metavar=("MIN", "MAX", "COUNT"))
+    parser.add_argument("--table-yaws-deg", nargs="+", type=float, default=[0., 90., 180., 270.])
     args = parser.parse_args()
+    if args.search_tabletop:
+        if args.search_placement or args.side != "both":
+            parser.error("--search-tabletop requires --side both and excludes --search-placement")
+        if args.table_height is None or not np.isfinite([args.table_height, args.source_table_z, *args.table_yaws_deg]).all():
+            parser.error("Table heights and yaws must be finite; --table-height is required")
+        for limits in (args.table_x_range, args.table_y_range):
+            if not np.isfinite(limits).all() or limits[0] > limits[1] or limits[2] < 1 or limits[2] != int(limits[2]):
+                parser.error("Search ranges require finite MIN <= MAX and positive integer COUNT")
     if not np.isfinite(args.clip_hand_tolerance) or args.clip_hand_tolerance < 0:
         parser.error("--clip-hand-tolerance must be finite and nonnegative")
     if not np.isfinite(args.time_scale) or args.time_scale < 1:
@@ -303,6 +381,8 @@ def main() -> None:
     print(f"Loaded {args.data}: T={ref['qpos'].shape[0]} H={ref['qpos'].shape[1]} "
           f"fps={ref['fps']}")
 
+    if args.search_tabletop:
+        args.scene_transform = search_tabletop(ref, args.rby1a_urdf, args)
     if args.search_placement:
         if args.side == "both":
             parser.error("Placement search currently requires one explicit --side")
@@ -360,7 +440,9 @@ def main() -> None:
               "max arm acceleration rad/s^2", np.abs(accel).max(axis=0))
 
     out_path = Path(args.out) if args.out else Path(args.data).with_suffix(".crx_retarget.npz")
-    extra = {}
+    extra = {"search_tabletop": args.search_tabletop}
+    if args.search_tabletop:
+        extra.update(table_height=args.table_height, source_table_z=args.source_table_z)
     for key, (pos, quat) in ref["objects"].items():
         obj = np.tile(np.eye(4), (len(pos), 1, 1))
         obj[:, :3, 3], obj[:, :3, :3] = pos, Rotation.from_quat(quat).as_matrix()
