@@ -24,6 +24,8 @@ HAND = np.r_[6:28, 34:56]
 
 def conservative_rate(q, fps):
     """Additional first-run slowdown, not a manufacturer limit or safety proof."""
+    if len(q) < 4:
+        raise ValueError("Need at least four frames for acceleration/jerk rate review")
     vmax = np.full(56, .4); vmax[ARM] = .2
     velocity = np.diff(q, axis=0) * fps
     acceleration = np.diff(velocity[:, ARM], axis=0) * fps

@@ -185,3 +185,6 @@ prepare_h5_entry_preview.py reads the exact reviewed_start.npz saved by run_h5_r
 ```
 
 Open http://127.0.0.1:9220 and inspect the entire approach using the frame slider. The prior example has right-arm J1/J4 changes around 66/67 degrees, unlike the 1-degree smoke motion. A preview without visible collision does not approve the physical path. If hardware moves after saving reviewed_start, this preview is stale; generate a new start snapshot without approving motion. The 2cm pad footprint and all obstacles also need to match the displayed scene.
+
+
+For one continuous display-only entry + task replay, add --include-replay to prepare_h5_entry_preview.py. It preserves the reviewed entry, then linearly resamples recorded joint motion and interpolates object rotations with SLERP at run_h5_real's conservative extra slowdown. entry_end_frame identifies the boundary. The object is fixed during entry and independently follows its recorded poses afterwards; visible grasp is not proof of physical grasp. This file remains explicitly non-executable. Existing entry-only behavior is unchanged.
