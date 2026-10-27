@@ -27,6 +27,8 @@ def main():
     parser.add_argument("--out",default="outputs/hammer/arm_smoke_relative.npz")
     args=parser.parse_args()
     with np.load(args.trajectory,allow_pickle=False) as f:
+        if "preview_only" in f and bool(f["preview_only"]):
+            raise ValueError("Display-only entry preview cannot be used for motion")
         if args.side not in f["sides"].tolist():
             raise ValueError("Side absent from source trajectory")
         relative,rate=build_relative_test(f["qpos56"],args.side,args.frames)

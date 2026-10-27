@@ -173,3 +173,15 @@ Adding --run-real opens read/verification connections and waits for literal STAR
 Hammer must be placed to match the saved object first pose, scale and orientation in the shared scene frame. Current object origin approximately [0.65,-0.4,-0.183392]m is not a directly measurable corner/grasp point. plan.json includes mesh bounds and orientation for alignment; use the passive viewer and actual geometry, not only the origin point. There is no perception, grasp detector or force control added. Start with empty hands: the recorded fingers open/close during approach and grasp.
 
 q+Enter/Ctrl+C stops; p+Enter requests measured hold. Physical resume is deliberately disabled after any pause because object state may have changed. Releasing/holding an actual tool is not guaranteed by software shutdown or process death; hardware stop procedures and the responsible on-site operator remain necessary. Joint tracking thresholds stop on large lag/contact instead of driving farther to force a grasp. End waits for joint settling but never reports physical task success. This entry has not been executed on actual hardware during development; default-only offline preparation and headless tests are the locally verified scope.
+
+
+## Preview the actual measured-to-first entry before physical replay
+
+prepare_h5_entry_preview.py reads the exact reviewed_start.npz saved by run_h5_real.py, checks it matches the supplied source trajectory, and generates the quintic joint interpolation used for entry. Objects stay fixed at their first recorded table pose. It sends no commands and cannot certify clearance. Output is tagged preview_only and lacks execution diagnostics; the mock/physical motion loader and small-arm entry explicitly reject it.
+
+```bash
+.venv/bin/python scripts/prepare_h5_entry_preview.py --trajectory outputs/hammer/both_tabletop_z175_slow7.npz --reviewed-start outputs/hammer/real_review_z175/reviewed_start.npz --out outputs/hammer/entry_z175_preview.npz
+.venv/bin/python scripts/view_h5_replay.py --trajectory outputs/hammer/entry_z175_preview.npz --reference-h5 ~/data/grab-s1_hammer_use_1-rby1a_sharpa.h5 --table 0.18358936 0.88358936 -1.15578132 0.24421868 -0.175 --port 9220
+```
+
+Open http://127.0.0.1:9220 and inspect the entire approach using the frame slider. The prior example has right-arm J1/J4 changes around 66/67 degrees, unlike the 1-degree smoke motion. A preview without visible collision does not approve the physical path. If hardware moves after saving reviewed_start, this preview is stale; generate a new start snapshot without approving motion. The 2cm pad footprint and all obstacles also need to match the displayed scene.

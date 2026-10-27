@@ -31,6 +31,8 @@ def load_motion(path):
             vmax.append(float(joints[name].find("limit").get("velocity")))
     lower, upper, vmax = map(np.asarray, (lower, upper, vmax))
     with np.load(path, allow_pickle=False) as data:
+        if "preview_only" in data and bool(data["preview_only"]):
+            raise ValueError("Display-only entry preview cannot be executed")
         q, fps = data["qpos56"].copy(), float(data["fps"])
         if data["sides"].tolist() != ["left", "right"]:
             raise ValueError("Mock runner requires both retargeted sides in left/right order")
