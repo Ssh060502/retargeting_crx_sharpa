@@ -91,3 +91,41 @@ scripts/view_h5_replay.py consumes qpos56 directly and displays both arms/hands 
 ```
 
 --validate-only checks files/meshes without importing viser or starting a server.
+
+
+## Software-mock execution (not hardware replay)
+
+New files: scripts/run_h5_mock.py, h5_mock_guard.py, h5_mock_playback.py. run_h5_replay.py remains offline with --execute disabled. Default invocation of the mock runner only validates the NPZ, joint bounds, source velocities and complete bimanual IK diagnostics. --run-mock explicitly enables publication. No dependency additions or changes to the existing backend are made.
+
+Mock execution requires a dedicated ROS_DOMAIN_ID=187 and ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST in both terminals. Do not use the physical-device domain (previously 87). The runner queries both controller managers through ListHardwareComponents, requiring exclusively active mock_components/GenericSystem plugins, and both hand_node parameters requiring backend=mock/read_only=false. Missing services, ambiguous node identities, competing publishers, stale verification and physical plugins fail closed. Verification continues while running. These are operational checks, not a security boundary against a malicious ROS participant.
+
+First stop the previous mock launch with Ctrl+C, then open a mock-only launch terminal:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ~/ws_fanuc/install/setup.bash
+export ROS_DOMAIN_ID=187
+export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+ros2 launch bimanual_manipulation bimanual_system.launch.py crx_mock:=true sharpa_backend:=mock rviz:=true viewer:=false method:=linear input_rate_hz:=50.0
+```
+
+In a separate terminal:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ~/ws_fanuc/install/setup.bash
+export ROS_DOMAIN_ID=187
+export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+cd ~/retargeting_crx_sharpa
+.venv/bin/python -c "import rclpy, sensor_msgs.msg, controller_manager_msgs.srv; print('ROS imports OK')"
+.venv/bin/python scripts/run_h5_mock.py --trajectory outputs/hammer/both_tabletop_slow7.npz
+.venv/bin/python scripts/run_h5_mock.py --trajectory outputs/hammer/both_tabletop_slow7.npz --run-mock
+```
+
+Do not unset PYTHONPATH/LD_LIBRARY_PATH for ROS execution; the interpreter must be ROS Jazzy compatible. If imports fail, stop and fix the Python/ROS environment rather than installing guessed pip ROS packages.
+
+The runner samples commands at 50Hz, matching the explicit linear interpolation input rate, preserving the saved trajectory duration. Initial and resumed entry use a quintic ease from measured feedback, with at least a 5s transition extended based on velocity and experimental arm acceleration/jerk budgets. This does not collision-check the entry or certify hardware behavior. Ordinary playback is linear resampling, so smooth acceleration across saved waypoint corners is not guaranteed. The isolated mock test intentionally verifies message routing/tracking, not physics or contact success.
+
+Controls: p + Enter pauses and requests one measured-pose hold through the existing backend; r + Enter re-enters the paused trajectory point from fresh measured feedback before continuing; q + Enter or Ctrl+C stops. EOF also stops. Final target continues until feedback settles within 0.02rad arms / 0.05rad hands for 0.5s, timeout 10s. Stale feedback, lost mock checks, missed deadlines >0.2s and tracking error >0.5rad stop playback. CSV records elapsed time, phase, trajectory progress, target and measured positions. Closing calls the backend's measured hold when valid feedback is available; missing feedback means cease publishing and leave driver timeout behavior in charge. Process death and arbitrary middleware failures cannot guarantee a hold. No real e-stop claim is implied.
+
+The mock test does NOT display a physically attached hammer in RViz: only robot joints are sent to the driver. Use the passive preview for recorded object motion. Do not take this as evidence that a real hand can grip or strike. Real-device execution remains unsupported. Locally only ROS-free tests and validation can run; installed ROS/Jazzy integration must be checked on the server.
