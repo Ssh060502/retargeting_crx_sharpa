@@ -348,8 +348,12 @@ class SharpaJointBackend:
                 self._stopped = True
                 self._reset_output_locked(self._last_published)
 
-    def close(self):
+    def close(self, *, send_hold=True):
         with self._lock:
+            if not send_hold:
+                if getattr(self, '_target_count', 0):
+                    raise RuntimeError('Cannot suppress the stop hold after commands were accepted')
+                self._output_armed = False
             if self._closed:
                 return
             self._closed = True

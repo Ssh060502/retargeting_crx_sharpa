@@ -202,3 +202,25 @@ def test_gesture_does_not_report_success_after_executor_failure(backend):
     backend._spin_error = 'executor failed'
     with pytest.raises(RuntimeError, match='executor failed'):
         backend.request_stop('gesture')
+
+
+
+def test_cancel_before_first_command_closes_without_publishing(backend):
+    b=backend
+    ready(b)
+    b._executor=NS(shutdown=lambda:None)
+    b._watchdog=None
+    b._thread.join=lambda:None
+    b._node.destroy_node=lambda:None
+    b._context.try_shutdown=lambda:None
+    b.close(send_hold=False)
+    assert b._closed
+    assert all(not messages for messages in b.sent.values())
+
+
+def test_cannot_suppress_hold_after_command(backend):
+    b=backend
+    ready(b)
+    b.execute(b._actual)
+    with pytest.raises(RuntimeError,match='Cannot suppress'):
+        b.close(send_hold=False)
