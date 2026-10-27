@@ -67,3 +67,16 @@ Use --side both --search-tabletop --table-height -0.195 with explicit --left-bas
 Only xy translation and yaw vary; roll/pitch remain zero. --anchor-object defaults to object_0. --table-x-range MIN MAX COUNT and --table-y-range MIN MAX COUNT bound the initial object-origin xy positions in the shared scene, not measured table boundaries. Defaults are x=[0.35,0.65], y=[-0.55,-0.25], three samples each. --table-yaws-deg defaults to 0 90 180 270. These are exploratory search bounds; table extent, hand/arm/object collision and support geometry are not checked.
 
 The search screens three frames, then checks 12 frames, then all frames. A candidate is accepted only if both arms converge on all frames without near-limit solutions. IK branch choices and finite sampling of placements can cause false negatives. Failure in this finite grid does not prove physical unreachability. Successful output is still offline only and requires fresh velocity/acceleration/jerk checks, transition planning and collision validation. The output records table_height/source_table_z and the chosen scene transform. Existing --search-placement behavior is unchanged.
+
+
+## Finite tabletop clearance screening
+
+scripts/check_h5_table_clearance.py transforms all available URDF collision STL triangles and reference object mesh triangles at every saved trajectory frame. STL scales, collision origins and full finger joints are included. Triangles are clipped to the finite xy tabletop footprint before computing minimum height, so triangles crossing table edges are not missed merely because all vertices lie outside. No new dependencies or ROS are required. Missing/unsupported meshes fail explicitly; links without collision geometry are listed in the report.
+
+Measured approximate table bounds in the shared left-base frame: x=[0.18358936,0.88358936], y=[-1.15578132,0.24421868], operation surface z=-0.195 meters. Bounds assume +X points toward the table, table centered on the two base centers, and the right base center is 0.153m behind the rear edge. The 0.0087m base-height calibration difference and tape-measure uncertainty remain.
+
+```bash
+.venv/bin/python scripts/check_h5_table_clearance.py --trajectory outputs/hammer/both_tabletop_slow7.npz --reference-h5 ~/data/grab-s1_hammer_use_1-rby1a_sharpa.h5 --object-map object_0=0 --table 0.18358936 0.88358936 -1.15578132 0.24421868 -0.195 --out outputs/hammer/table_clearance.json
+```
+
+The 2mm default tolerance is only a reporting threshold, not clearance certification. The tested forbidden region extends downward indefinitely within the table footprint, conservatively covering under-table intrusion. This is not a watertight mesh/solid intersection engine. It does not check self/inter-arm/object-robot collisions, unmodeled stands, inside-volume containment cases, between-frame swept motion, initial/final transitions or physical calibration error. Zero flagged entities must never be called collision-free. Object support contact near zero clearance is reported without automatically classifying it as an invalid task contact.
