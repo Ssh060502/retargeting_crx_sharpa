@@ -24,11 +24,22 @@ class MockGuard:
         require_mock_domain()
         import rclpy
         from rclpy.context import Context
+        from rclpy.executors import SingleThreadedExecutor
         from controller_manager_msgs.srv import ListHardwareComponents
         from rcl_interfaces.srv import GetParameters
         self.rclpy = rclpy
         self.context = Context(); rclpy.init(args=[], context=self.context)
         self.node = rclpy.create_node("h5_mock_guard", context=self.context)
+        # spin_once(node) without an executor creates a GLOBAL executor, whose
+        # default context is uninitialized here. Keep one explicit private executor.
+        try:
+            self.executor = SingleThreadedExecutor(context=self.context)
+            self.executor.add_node(self.node)
+        except BaseException:
+            self.node.destroy_node()
+            self.context.try_shutdown()
+            raise
+        self._closed = False
         self.arms = [self.node.create_client(ListHardwareComponents, f"/crx5ia/{s}/controller_manager/list_hardware_components") for s in ("left", "right")]
         self.hands = [self.node.create_client(GetParameters, f"/sharpa/{s}_hand/hand_node/get_parameters") for s in ("left", "right")]
         self.hardware_request, self.parameter_request = ListHardwareComponents, GetParameters
@@ -49,7 +60,7 @@ class MockGuard:
         future = client.call_async(request)
         deadline = time.monotonic() + 2.
         while not future.done() and time.monotonic() < deadline and not self.stop_event.is_set():
-            self.rclpy.spin_once(self.node, timeout_sec=.05)
+            self.executor.spin_once(timeout_sec=.05)
         if not future.done() or future.exception() is not None:
             raise RuntimeError("Mock verification service failed: " + client.srv_name)
         return future.result()
@@ -93,8 +104,18 @@ class MockGuard:
             raise RuntimeError("Mock verification lost: " + str(self.failure or "stale verification"))
 
     def close(self):
+        if self._closed:
+            return
         self.stop_event.set()
         self.thread.join(timeout=10.)
         if self.thread.is_alive():
             raise RuntimeError("Mock guard worker did not stop")
-        self.node.destroy_node(); self.context.try_shutdown()
+        try:
+            self.executor.shutdown(timeout_sec=3.)
+        finally:
+            try:
+                self.executor.remove_node(self.node)
+                self.node.destroy_node()
+            finally:
+                self.context.try_shutdown()
+                self._closed = True

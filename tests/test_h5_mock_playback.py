@@ -69,3 +69,37 @@ def test_sampling_does_not_change_duration_or_overrun_end():
     q=np.tile(np.array([0., .1, .2])[:,None],(1,56))
     np.testing.assert_allclose(sample_trajectory(q,2.,.25), .05)
     np.testing.assert_allclose(sample_trajectory(q,2.,100.), .2)
+
+
+
+def test_guard_service_uses_explicit_executor():
+    from h5_mock_guard import MockGuard
+    import threading
+    guard = MockGuard.__new__(MockGuard)
+    guard.stop_event = threading.Event()
+    state = {"done": False, "spins": 0}
+    def spin_once(**kwargs):
+        state["spins"] += 1
+        state["done"] = True
+    guard.executor = NS(spin_once=spin_once)
+    future = NS(done=lambda: state["done"], exception=lambda: None, result=lambda: "response")
+    client = NS(wait_for_service=lambda **kwargs: True, call_async=lambda request: future)
+    assert guard._call(client, object()) == "response"
+    assert state["spins"] == 1
+
+
+def test_guard_close_stops_worker_before_executor_and_context():
+    from h5_mock_guard import MockGuard
+    calls = []
+    guard = MockGuard.__new__(MockGuard)
+    guard._closed = False
+    guard.stop_event = NS(set=lambda: calls.append("signal"))
+    guard.thread = NS(join=lambda **kwargs: calls.append("join"), is_alive=lambda: False)
+    guard.executor = NS(shutdown=lambda **kwargs: calls.append("executor_shutdown"),
+                        remove_node=lambda node: calls.append("remove_node"))
+    guard.node = NS(destroy_node=lambda: calls.append("destroy_node"))
+    guard.context = NS(try_shutdown=lambda: calls.append("context_shutdown"))
+    guard.close()
+    assert calls == ["signal", "join", "executor_shutdown", "remove_node", "destroy_node", "context_shutdown"]
+    guard.close()
+    assert len(calls) == 6
